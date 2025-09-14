@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Line } from "react-chartjs-2";
 import {
@@ -24,8 +24,8 @@ ChartJS.register(
 
 const frequencies = [250, 500, 1000, 2000, 4000, 8000]; // Hz
 const ears = ["left", "right"];
-const minGain = -70;
-const maxGain = 0;
+const minGain = 0; // dB HL
+const maxGain = 70; // dB HL
 const step = 5;
 const intensities = Array.from(
   { length: (maxGain - minGain) / step + 1 },
@@ -42,38 +42,153 @@ export default function AudiometryTest() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [testComplete, setTestComplete] = useState(false);
 
-  // --- Tone generator ---
+  // refs for audio nodes & analyser (to visualize waveform)
+  const audioCtxRef = useRef(null);
+  const analyserRef = useRef(null);
+  const rafRef = useRef(null);
+  const canvasRef = useRef(null);
+
+  // --- Web Audio API tone player ---
   const playTone = (freq, dbHL, ear) => {
+    // Notes on calibration:
+    // - This mapping is *relative* and for demo/testing. Real dBHL -> amplitude calibration
+    //   requires measurement with hardware and reference levels.
+    // - Here we map dbHL (0..maxGain) to amplitude roughly on a 60-70 dB span:
+    //   amplitude = 10^((dbHL - maxGain)/20) so that:
+    //     dbHL = maxGain  => amplitude = 1
+    //     dbHL = 0        => amplitude ~ 10^(-maxGain/20)
+    //   You can change `maxGain` or the formula if you need different loudness scaling.
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      // create or reuse AudioContext
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) throw new Error("Web Audio API not supported");
+
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx();
+      const ctx = audioCtxRef.current;
+
+      // resume if suspended (user gesture needed — your Play button is a gesture)
+      if (ctx.state === "suspended") {
+        ctx.resume();
+      }
+
+      // oscillator -> gain -> panner -> destination
       const osc = ctx.createOscillator();
       const gainNode = ctx.createGain();
-      const panNode = new StereoPannerNode(ctx, {
-        pan: ear === "left" ? -1 : 1,
-      });
+      const panNode = ctx.createStereoPanner ? ctx.createStereoPanner() : null; // fallback if not supported
 
-      gainNode.gain.value = Math.pow(10, dbHL / 20);
+      // waveform: sine
       osc.type = "sine";
       osc.frequency.value = freq;
-      osc.connect(gainNode).connect(panNode).connect(ctx.destination);
+
+      // map dbHL -> linear amplitude (arbitrary calibration)
+      // amplitude = 10^((dbHL - maxGain)/20)
+      const amplitude = Math.pow(10, (dbHL - maxGain) / 20);
+      // tiny safeguard
+      gainNode.gain.value = Math.max(0, amplitude);
+
+      // pan: left = -1, right = +1 (if stereo panner available)
+      if (panNode) {
+        panNode.pan.value = ear === "left" ? -1 : 1;
+        osc.connect(gainNode).connect(panNode).connect(ctx.destination);
+      } else {
+        osc.connect(gainNode).connect(ctx.destination);
+      }
+
+      // Setup analyser for waveform preview
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyserRef.current = analyser;
+      // insert analyser before destination to observe the signal
+      if (panNode) {
+        gainNode.disconnect();
+        gainNode.connect(analyser);
+        analyser.connect(panNode);
+        panNode.connect(ctx.destination);
+      } else {
+        gainNode.disconnect();
+        gainNode.connect(analyser);
+        analyser.connect(ctx.destination);
+      }
+
       osc.start();
 
+      // draw waveform while playing
+      drawWaveform();
+
+      // stop after 1s
       setTimeout(() => {
         try {
           osc.stop();
-          ctx.close();
-        } catch {}
+          // cleanup analyser/raf
+          if (rafRef.current) {
+            cancelAnimationFrame(rafRef.current);
+            rafRef.current = null;
+          }
+          // disconnect nodes
+          try {
+            osc.disconnect();
+            gainNode.disconnect();
+            if (panNode) panNode.disconnect();
+            if (analyser) analyser.disconnect();
+          } catch (e) {}
+          // keep audioCtx alive for reuse (don't close to avoid user gesture requirement repeatedly)
+        } catch (e) {}
       }, 1000);
     } catch (err) {
-      alert("Audio error. Please check your headphones.");
+      console.error("Audio error:", err);
+      alert(
+        "Audio error. Please check your headphones and browser support for Web Audio API."
+      );
     }
+  };
+
+  // draw waveform on canvas using analyserRef
+  const drawWaveform = () => {
+    const canvas = canvasRef.current;
+    const analyser = analyserRef.current;
+    const ctx2d = canvas ? canvas.getContext("2d") : null;
+    if (!canvas || !analyser || !ctx2d) return;
+
+    const bufferLength = analyser.fftSize;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const draw = () => {
+      rafRef.current = requestAnimationFrame(draw);
+      analyser.getByteTimeDomainData(dataArray);
+
+      ctx2d.fillStyle = "rgba(255,255,255,0)";
+      ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx2d.lineWidth = 2;
+      ctx2d.strokeStyle = "#111827"; // dark line
+
+      ctx2d.beginPath();
+
+      const sliceWidth = (canvas.width * 1.0) / bufferLength;
+      let x = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0; // 0..2
+        const y = (v * canvas.height) / 2;
+        if (i === 0) {
+          ctx2d.moveTo(x, y);
+        } else {
+          ctx2d.lineTo(x, y);
+        }
+        x += sliceWidth;
+      }
+
+      ctx2d.lineTo(canvas.width, canvas.height / 2);
+      ctx2d.stroke();
+    };
+
+    // start drawing
+    if (!rafRef.current) draw();
   };
 
   // --- Helpers ---
   const normalizeToHL = (val) => {
     if (val === undefined || val === null) return 100;
     if (val === 100) return 100;
-    if (val < 0) return 0;
     return Math.min(100, Math.abs(val));
   };
 
@@ -120,11 +235,13 @@ export default function AudiometryTest() {
   const playCurrentTone = () => {
     if (isPlaying || testComplete) return;
     setIsPlaying(true);
+    // play tone with WebAudio API
     playTone(
       frequencies[currentFreqIndex],
       intensities[currentIntensityIndex],
       ears[currentEarIndex]
     );
+    // stop playing flag after tone duration + small buffer
     setTimeout(() => setIsPlaying(false), 1100);
   };
 
@@ -199,35 +316,24 @@ export default function AudiometryTest() {
     }
   }, [testComplete]);
 
-  // --- Chart ---
-  const chartYValue = (val) => {
-    if (val === undefined || val === null) return null;
-    if (val === 100) return 100;
-    if (val < 0) return 0;
-    return Math.min(100, Math.abs(val));
-  };
-
-  const chartData = {
+  // --- Chart data ---
+  const makeChartData = (ear, color) => ({
     labels: frequencies.map((f) => `${f} Hz`),
     datasets: [
       {
-        label: "Left Ear",
-        data: frequencies.map((f) => chartYValue(results.left[f])),
-        borderColor: "#3b82f6",
-        backgroundColor: "#3b82f6",
-      },
-      {
-        label: "Right Ear",
-        data: frequencies.map((f) => chartYValue(results.right[f])),
-        borderColor: "#ef4444",
-        backgroundColor: "#ef4444",
+        label: `${ear} ear`,
+        data: frequencies.map((f) => normalizeToHL(results[ear][f])),
+        borderColor: color,
+        backgroundColor: color,
+        tension: 0.2,
+        pointRadius: 6,
       },
     ],
-  };
+  });
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white p-6">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <h1 className="text-3xl font-bold text-green-500 mb-6 text-center">
           Audiometry Hearing Test
         </h1>
@@ -270,6 +376,17 @@ export default function AudiometryTest() {
                 👎 Not Heard
               </button>
             </div>
+
+            {/* Waveform preview canvas */}
+            <div className="mt-4 flex justify-center">
+              <canvas
+                ref={canvasRef}
+                width={600}
+                height={80}
+                className="border rounded"
+                style={{ width: "100%", maxWidth: 600 }}
+              />
+            </div>
           </div>
         ) : (
           <>
@@ -280,7 +397,7 @@ export default function AudiometryTest() {
             <div className="text-center mt-6">
               <button
                 onClick={() => navigate("/results")}
-                className="bg-primary-600 text-white px-6 py-3 rounded-xl shadow hover:bg-primary-700 transition"
+                className="bg-green-600 text-white px-6 py-3 rounded-xl shadow hover:bg-green-700 transition cursor-pointer"
               >
                 View Results
               </button>
@@ -288,24 +405,49 @@ export default function AudiometryTest() {
           </>
         )}
 
-        {/* Chart */}
-        <div className="bg-white shadow-lg rounded-xl p-6 mt-8">
-          <h2 className="text-xl font-semibold mb-4">Audiogram</h2>
-          <Line
-            data={chartData}
-            options={{
-              responsive: true,
-              scales: {
-                y: {
-                  reverse: true,
-                  title: { display: true, text: "dB HL" },
-                  min: 0,
-                  max: 100,
+        {/* Separated Charts */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+          <div className="bg-white shadow-lg rounded-xl p-6">
+            <h2 className="text-xl font-semibold mb-4 text-blue-600">
+              Left Ear Audiogram
+            </h2>
+            <Line
+              data={makeChartData("left", "#3b82f6")}
+              options={{
+                responsive: true,
+                scales: {
+                  y: {
+                    reverse: true,
+                    title: { display: true, text: "dB HL" },
+                    min: 0,
+                    max: 100,
+                  },
+                  x: { title: { display: true, text: "Frequency (Hz)" } },
                 },
-                x: { title: { display: true, text: "Frequency (Hz)" } },
-              },
-            }}
-          />
+              }}
+            />
+          </div>
+
+          <div className="bg-white shadow-lg rounded-xl p-6">
+            <h2 className="text-xl font-semibold mb-4 text-red-600">
+              Right Ear Audiogram
+            </h2>
+            <Line
+              data={makeChartData("right", "#ef4444")}
+              options={{
+                responsive: true,
+                scales: {
+                  y: {
+                    reverse: true,
+                    title: { display: true, text: "dB HL" },
+                    min: 0,
+                    max: 100,
+                  },
+                  x: { title: { display: true, text: "Frequency (Hz)" } },
+                },
+              }}
+            />
+          </div>
         </div>
 
         {/* Post-test Summary */}

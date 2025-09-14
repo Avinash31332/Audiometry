@@ -1,9 +1,33 @@
 import React from "react";
 import { Link } from "react-router-dom";
+import { FiHeadphones, FiPlay, FiThumbsUp, FiBarChart2 } from "react-icons/fi";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 
 export default function Home() {
+  const steps = [
+    {
+      icon: <FiHeadphones className="text-3xl text-green-500" />,
+      title: "Plug in headphones",
+      desc: "Use wired headphones for accurate results.",
+    },
+    {
+      icon: <FiPlay className="text-3xl text-green-500" />,
+      title: "Play tone",
+      desc: "Listen carefully to the tones at each frequency.",
+    },
+    {
+      icon: <FiThumbsUp className="text-3xl text-green-500" />,
+      title: "Record response",
+      desc: "Indicate whether you hear the tone or not.",
+    },
+    {
+      icon: <FiBarChart2 className="text-3xl text-green-500" />,
+      title: "View results",
+      desc: "Check your audiogram and recommendations.",
+    },
+  ];
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-surface to-white text-slate-900">
       <section className="max-w-6xl mx-auto px-6 py-16">
@@ -58,65 +82,22 @@ export default function Home() {
             </ul>
           </div>
 
-          {/* Hero illustration card */}
-          <div>
-            <Card className="p-6">
-              <div className="flex flex-col items-center gap-4">
-                {/* simple svg illustration */}
-                <svg
-                  width="220"
-                  height="160"
-                  viewBox="0 0 220 160"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <rect
-                    x="0"
-                    y="0"
-                    width="220"
-                    height="160"
-                    rx="12"
-                    fill="#ffffff"
-                  />
-                  <g transform="translate(20,30)">
-                    <circle cx="30" cy="30" r="26" fill="#eff6ff" />
-                    <path
-                      d="M28 20 C40 25, 40 35, 28 40"
-                      stroke="#2563eb"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      fill="none"
-                    />
-                    <rect
-                      x="72"
-                      y="10"
-                      width="92"
-                      height="60"
-                      rx="6"
-                      fill="#f0fdf4"
-                      stroke="#10b981"
-                    />
-                    <text
-                      x="118"
-                      y="45"
-                      fill="#065f46"
-                      fontSize="10"
-                      textAnchor="middle"
-                    >
-                      Audiogram
-                    </text>
-                  </g>
-                </svg>
-
-                <div className="text-center">
-                  <h3 className="text-lg font-semibold">Reliable & simple</h3>
-                  <p className="text-sm text-muted">
-                    Designed to approximate clinical audiometry using your
-                    browser's audio engine.
-                  </p>
+          {/* Step-by-Step Guide with Icons */}
+          <div className="flex flex-col gap-4">
+            {steps.map((step, idx) => (
+              <Card
+                key={idx}
+                className="p-6 hover:shadow-lg transition-shadow flex items-start gap-4"
+              >
+                {step.icon}
+                <div>
+                  <h3 className="text-lg font-semibold text-primary-700">
+                    {step.title}
+                  </h3>
+                  <p className="text-sm text-muted mt-1">{step.desc}</p>
                 </div>
-              </div>
-            </Card>
+              </Card>
+            ))}
           </div>
         </div>
 

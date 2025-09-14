@@ -4,7 +4,7 @@ function Header() {
   return (
     <header className="bg-white shadow-sm">
       <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-        <Link to="/" className="text-xl font-bold text-primary-700">
+        <Link to="/" className="text-xl font-bold text-green-600">
           Audiometry
         </Link>
 
